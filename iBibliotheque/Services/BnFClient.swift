@@ -120,9 +120,62 @@ final class BnFClient {
             author: cleanAuthor(record.creator),
             publisher: record.publisher ?? "",
             year: extractYear(record.date),
-            coverURLString: nil, // la BnF ne fournit pas de couverture via cet endpoint
+            coverURLString: await coverURL(isbn: value),
             source: .bnf
         )
+    }
+
+    // MARK: - Couvertures (API Couvertures du Catalogue général)
+
+    /// Construit l'URL de couverture BnF pour un ISBN donné et vérifie qu'elle existe réellement
+    /// (une notice sans image de couverture renvoie une erreur 500 côté API).
+    /// Retourne `nil` si aucune couverture n'est disponible, pour laisser BookLookupService
+    /// enrichir via Google Books.
+    private func coverURL(isbn: String) async -> String? {
+        guard let url = buildCoverURL(isbn: isbn, size: .resized(width: 500)) else { return nil }
+        guard await coverExists(at: url) else { return nil }
+        return url.absoluteString
+    }
+
+    private enum CoverSize {
+        case thumbnail
+        case original
+        case resized(width: Int)
+    }
+
+    private func buildCoverURL(isbn: String, size: CoverSize, face: Int = 1) -> URL? {
+        var components = URLComponents(string: "https://openapi.bnf.fr/couverture/image/image/recupererImage")
+        var queryItems = [
+            URLQueryItem(name: "ISBN", value: isbn),
+            URLQueryItem(name: "couverture", value: String(face)) // 1 = première de couverture
+        ]
+
+        switch size {
+        case .thumbnail:
+            break // paramètre "couverture" seul = miniature
+        case .original:
+            queryItems.append(URLQueryItem(name: "taille", value: "originale"))
+        case .resized(let width):
+            queryItems.append(URLQueryItem(name: "taille", value: "originale"))
+            queryItems.append(URLQueryItem(name: "largeur", value: String(width)))
+        }
+
+        components?.queryItems = queryItems
+        return components?.url
+    }
+
+    /// Requête HEAD légère : l'API renvoie une erreur 500 si la notice n'a pas de couverture,
+    /// ce qui n'est pas une indisponibilité du service mais l'absence de l'image elle-même.
+    private func coverExists(at url: URL) async -> Bool {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { return false }
+            return httpResponse.statusCode == 200
+        } catch {
+            return false
+        }
     }
 
     /// La BnF formate les auteurs ainsi : "Nom, Prénom (dates). Fonction"
