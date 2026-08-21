@@ -4,8 +4,9 @@ import Foundation
 /// Le reste de l'app n'a jamais à savoir d'où vient la donnée.
 ///
 /// Ordre de la cascade :
-/// 1. BnF (dépôt légal, exhaustif pour les livres français, mais pas de couverture)
-/// 2. Google Books (bon complément pour couverture, fallback si BnF ne trouve rien)
+/// 1. BnF (dépôt légal, exhaustif pour les livres français, couverture via l'API Couvertures
+///    quand elle existe dans la notice)
+/// 2. Google Books (comble les couvertures manquantes à la BnF, fallback si BnF ne trouve rien)
 /// 3. Open Library (dernier recours, notamment pour livres étrangers/traduits)
 final class BookLookupService {
     private let bnf = BnFClient()
@@ -15,7 +16,7 @@ final class BookLookupService {
     func lookup(isbn: String) async -> BookMetadata? {
         do {
             let result = try await bnf.lookup(isbn: isbn)
-            // La BnF ne fournit pas de couverture : on l'enrichit via Google Books si possible.
+            // Si la notice BnF n'a pas de couverture (zone 950 absente), on enrichit via Google Books.
             if result.coverURLString == nil {
                 do {
                     let googleResult = try await google.lookup(isbn: isbn)
